@@ -2,7 +2,7 @@ import aiosqlite
 from dataclasses import dataclass
 from typing import Optional, Literal, List, Dict, Any
 
-ApplicationStatus = Literal["pending", "approved", "rejected", "needs_fix"]
+ApplicationStatus = Literal["pending", "approved", "rejected"]
 
 @dataclass
 class Application:
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS applications (
     arma_id TEXT NOT NULL,
     platform TEXT NOT NULL,
     steam_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','needs_fix')) DEFAULT 'pending',
+    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')) DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     admin_comment TEXT,
@@ -42,47 +42,33 @@ CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
 
 
 class Database:
+    """Простая обёртка вокруг aiosqlite для управления заявками."""
     def __init__(self, path: str):
         self._path = path
         self._conn: Optional[aiosqlite.Connection] = None
 
     async def connect(self) -> None:
+        """Открыть соединение и применить схему (без миграций)."""
         self._conn = await aiosqlite.connect(self._path)
         await self._conn.execute("PRAGMA foreign_keys=ON;")
         await self._conn.executescript(SCHEMA_SQL)
         await self._conn.commit()
-        
-        # Миграция: добавляем поле admin_comment если его нет
-        await self._migrate_add_admin_comment()
 
     async def close(self) -> None:
+        """Закрыть соединение, если открыто."""
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
 
-    async def _migrate_add_admin_comment(self) -> None:
-        """Миграция: добавляем поля admin_comment и admin_id если их нет"""
-        try:
-            # Проверяем, существует ли поле admin_comment
-            cursor = await self._conn.execute("PRAGMA table_info(applications)")
-            columns = await cursor.fetchall()
-            column_names = [col[1] for col in columns]
-            
-            if 'admin_comment' not in column_names:
-                print("Добавляем поле admin_comment в таблицу applications...")
-                await self._conn.execute("ALTER TABLE applications ADD COLUMN admin_comment TEXT")
-                await self._conn.commit()
-                print("Поле admin_comment успешно добавлено")
-                
-            if 'admin_id' not in column_names:
-                print("Добавляем поле admin_id в таблицу applications...")
-                await self._conn.execute("ALTER TABLE applications ADD COLUMN admin_id INTEGER")
-                await self._conn.commit()
-                print("Поле admin_id успешно добавлено")
-        except Exception as e:
-            print(f"Ошибка при миграции: {e}")
-
-    async def create_application(self, user_id: int, username: str, arma_id: str, platform: str, steam_id: str) -> int:
+    async def create_application(
+        self,
+        user_id: int,
+        username: str,
+        arma_id: str,
+        platform: str,
+        steam_id: str,
+    ) -> int:
+        """Создать новую заявку со статусом pending. Возвращает ID заявки."""
         assert self._conn is not None
         cursor = await self._conn.execute(
             """
@@ -95,12 +81,17 @@ class Database:
         return cursor.lastrowid
 
     async def get_application(self, app_id: int) -> Optional[Application]:
+        """Получить заявку по ID."""
         assert self._conn is not None
-        cursor = await self._conn.execute("SELECT * FROM applications WHERE id = ?", (app_id,))
+        cursor = await self._conn.execute(
+            "SELECT * FROM applications WHERE id = ?",
+            (app_id,),
+        )
         row = await cursor.fetchone()
         return self._row_to_app(row)
 
     async def get_user_latest_application(self, user_id: int) -> Optional[Application]:
+        """Получить последнюю (по ID) заявку пользователя."""
         assert self._conn is not None
         cursor = await self._conn.execute(
             "SELECT * FROM applications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
@@ -109,23 +100,8 @@ class Database:
         row = await cursor.fetchone()
         return self._row_to_app(row)
 
-    async def list_applications(self, status: Optional[ApplicationStatus] = None, limit: int = 20, offset: int = 0) -> List[Application]:
-        assert self._conn is not None
-        if status:
-            cursor = await self._conn.execute(
-                "SELECT * FROM applications WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            )
-        else:
-            cursor = await self._conn.execute(
-                "SELECT * FROM applications ORDER BY id DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            )
-        rows = await cursor.fetchall()
-        return [self._row_to_app(r) for r in rows if r]
-
     async def list_approved_arma_ids(self) -> List[str]:
-        """Return list of arma_id for all approved applications."""
+        """Список Arma ID всех одобренных заявок."""
         assert self._conn is not None
         cursor = await self._conn.execute(
             "SELECT DISTINCT arma_id FROM applications WHERE status = 'approved' ORDER BY arma_id ASC"
@@ -134,6 +110,7 @@ class Database:
         return [r[0] for r in rows if r and r[0]]
 
     async def update_status(self, app_id: int, status: ApplicationStatus) -> bool:
+        """Обновить статус заявки."""
         assert self._conn is not None
         cursor = await self._conn.execute(
             """
@@ -147,6 +124,7 @@ class Database:
         return cursor.rowcount > 0
 
     async def update_fields(self, app_id: int, fields: Dict[str, Any]) -> bool:
+        """Обновить произвольные поля заявки + метку updated_at."""
         assert self._conn is not None
         if not fields:
             return True
@@ -159,7 +137,14 @@ class Database:
         await self._conn.commit()
         return cursor.rowcount > 0
 
-    async def update_status_with_comment(self, app_id: int, status: ApplicationStatus, comment: Optional[str] = None, admin_id: Optional[int] = None) -> bool:
+    async def update_status_with_comment(
+        self,
+        app_id: int,
+        status: ApplicationStatus,
+        comment: Optional[str] = None,
+        admin_id: Optional[int] = None,
+    ) -> bool:
+        """Обновить статус + комментарий/ID администратора."""
         assert self._conn is not None
         cursor = await self._conn.execute(
             """
@@ -173,6 +158,7 @@ class Database:
         return cursor.rowcount > 0
 
     def _row_to_app(self, row) -> Optional[Application]:
+        """Преобразование строки БД в dataclass Application."""
         if not row:
             return None
         return Application(

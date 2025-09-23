@@ -3,9 +3,9 @@ from typing import Optional
 import re
 from datetime import datetime, timezone, timedelta
 try:
-    from zoneinfo import ZoneInfo  # Python 3.9+
+    from zoneinfo import ZoneInfo
 except Exception:
-    ZoneInfo = None  # type: ignore
+    ZoneInfo = None 
 
 import discord
 from discord import app_commands
@@ -27,7 +27,7 @@ except Exception:
 
 
 def to_unix_msk(sqlite_text: str) -> int:
-    """Convert SQLite UTC timestamp text (YYYY-MM-DD HH:MM:SS) to Unix seconds in MSK."""
+    """Преобразует UTC-метку SQLite в Unix-время по МСК."""
     try:
         dt_naive = datetime.strptime(sqlite_text, "%Y-%m-%d %H:%M:%S")
     except ValueError:
@@ -63,7 +63,7 @@ STATUS_EMOJI = {
 
 
 def get_status_ui(status: str) -> tuple[str, str, int]:
-    """Return (emoji, text, color) for a status with sane defaults."""
+    """Возвращает (emoji, текст, цвет) для заданного статуса."""
     return (
         STATUS_EMOJI.get(status, "❓"),
         STATUS_TEXT.get(status, status),
@@ -72,7 +72,9 @@ def get_status_ui(status: str) -> tuple[str, str, int]:
 
 
 class ApplicationModal(discord.ui.Modal):
+    """Модальное окно для создания/переподачи заявки."""
     def __init__(self, db: Database, is_resubmit: bool = False, original_app_id: int = None, original_data: dict = None):
+        """Инициализирует поля модального окна и предзаполняет данные."""
         super().__init__(title="Заявка на Whitelist")
         self.db = db
         self.is_resubmit = is_resubmit
@@ -119,6 +121,7 @@ class ApplicationModal(discord.ui.Modal):
             self.title = "Повторная подача заявки"
 
     async def on_submit(self, interaction: discord.Interaction):
+        """Обрабатывает отправку формы пользователем."""
         assert interaction.user is not None
         user_id = interaction.user.id
         nickname = str(self.nickname).strip()
@@ -238,7 +241,9 @@ class ApplyView(discord.ui.View):
 
 
 class WhitelistBot(commands.Bot):
+    """Основной класс Discord-бота для управления заявками."""
     def __init__(self, db: Database):
+        """Создаёт экземпляр бота и настраивает интенты/префикс."""
         super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=INTENTS)
         self.db = db
         self.add_view(ApplyView(self.db))
@@ -255,10 +260,12 @@ class WhitelistBot(commands.Bot):
             pass
 
     async def on_ready(self) -> None:
+        """Вызывается при успешном подключении бота."""
         print(f"Bot is running as {self.user}")
         await self.ensure_application_message()
 
     async def on_message(self, message):
+        """Обрабатывает входящие сообщения и роутит админские команды."""
         if message.author.bot:
             return
 
@@ -276,6 +283,7 @@ class WhitelistBot(commands.Bot):
         await self.handle_admin_command(message)
 
     async def ensure_application_message(self) -> None:
+        """Гарантирует наличие стартового сообщения с кнопкой заявки."""
         settings = get_settings()
         if not settings.channel_id:
             return
@@ -328,7 +336,7 @@ class WhitelistBot(commands.Bot):
             pass
 
     async def handle_admin_command(self, message):
-        """Обработка админских команд в личных сообщениях"""
+        """Обрабатывает админские команды в личных сообщениях."""
         content = message.content.strip()
 
         if content == "!list":
@@ -363,7 +371,7 @@ class WhitelistBot(commands.Bot):
             await message.reply("Неизвестная команда. Используйте `!help` для справки.")
 
     async def admin_list_applications(self, message):
-        """Показать список всех заявок"""
+        """Показывает список заявок, требующих обработки."""
         try:
             apps_all = await self.db.list_applications(limit=100)
             apps = [a for a in apps_all if a.status != "approved"]
@@ -388,7 +396,7 @@ class WhitelistBot(commands.Bot):
             await message.reply(f"Ошибка при получении списка: {e}")
 
     async def admin_view_application(self, message, app_id: int):
-        """Показать подробную информацию о заявке"""
+        """Показывает подробную информацию о заявке."""
         app = await self.db.get_application(app_id)
         if not app:
             await message.reply(f"Заявка #{app_id} не найдена.")
@@ -427,7 +435,7 @@ class WhitelistBot(commands.Bot):
         await message.reply(embed=embed)
 
     async def admin_update_status(self, message, app_id: int, status: str, comment: Optional[str] = None):
-        """Обновить статус заявки"""
+        """Обновляет статус заявки и уведомляет автора."""
         app = await self.db.get_application(app_id)
         if not app:
             await message.reply(f"Заявка #{app_id} не найдена.")
@@ -453,7 +461,7 @@ class WhitelistBot(commands.Bot):
         await message.reply(embed=embed)
 
     async def notify_user_status_change(self, app, new_status: str, comment: Optional[str] = None):
-        """Уведомить пользователя об изменении статуса заявки"""
+        """Отправляет пользователю уведомление о смене статуса."""
         user = self.get_user(app.user_id)
         if not user:
             return
@@ -493,7 +501,7 @@ class WhitelistBot(commands.Bot):
         await user.send(embed=embed)
 
     async def admin_help(self, message):
-        """Показать справку по админским командам"""
+        """Показывает краткую справку по админским командам."""
         embed = discord.Embed(title="Админские команды", description="Команды для управления заявками на whitelist", color=0x3498db)
 
         embed.add_field(name="Просмотр заявок", value="`!list` - показать последние 10 заявок\n`!view <id>` - подробная информация о заявке", inline=False)
@@ -504,10 +512,12 @@ class WhitelistBot(commands.Bot):
 
 
 def build_bot(db: Database) -> WhitelistBot:
+    """Собирает экземпляр бота и регистрирует slash-команды."""
     bot = WhitelistBot(db)
 
     @bot.tree.command(name="status", description="Показать статус вашей заявки")
     async def status_slash(interaction: discord.Interaction):
+        """Показывает статус последней заявки пользователя."""
         app = await db.get_user_latest_application(interaction.user.id)
         if not app:
             embed = discord.Embed(title="Заявка не найдена", description="У вас пока нет заявок на whitelist.\n\nИспользуйте кнопку **\"Подать заявку\"** для создания новой заявки.", color=0xe74c3c)
@@ -534,6 +544,7 @@ def build_bot(db: Database) -> WhitelistBot:
 
     @bot.tree.command(name="resubmit", description="Повторная подача заявки (если отклонена/на доработку)")
     async def resubmit_slash(interaction: discord.Interaction):
+        """Открывает модалку для переподачи отклонённой заявки."""
         app = await db.get_user_latest_application(interaction.user.id)
         if not app:
             embed = discord.Embed(title="Заявка не найдена", description="У вас нет заявок для повторной подачи.\n\nСначала создайте заявку с помощью кнопки **\"Подать заявку\"**.", color=0xe74c3c)
@@ -551,6 +562,7 @@ def build_bot(db: Database) -> WhitelistBot:
 
     @bot.tree.command(name="help", description="Показать справку по командам")
     async def help_slash(interaction: discord.Interaction):
+        """Выводит справку по пользовательским slash-командам."""
         embed = discord.Embed(title="Whitelist Bot - Справка", description="**Добро пожаловать в систему управления заявками на whitelist!**\n\nЗдесь вы можете подать заявку на получение доступа к серверу Arma Reforger.", color=0x3498db)
 
         embed.add_field(name="Доступные команды", value="`/status` - Показать статус вашей заявки\n`/resubmit` - Повторная подача заявки\n`/help` - Показать эту справку", inline=False)

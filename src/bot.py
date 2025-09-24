@@ -236,6 +236,18 @@ class WhitelistBot(commands.Bot):
         except Exception:
             pass
 
+        await self._restore_admin_views()
+
+    async def _restore_admin_views(self) -> None:
+        """Восстанавливаем view для всех активных заявок после рестарта."""
+        try:
+            pending_apps = await self.db.get_pending_applications()
+            for app in pending_apps:
+                view = AdminDecisionView(self, self.db, app.id)
+                self.add_view(view)
+        except Exception as e:
+            print(f"Ошибка при восстановлении admin views: {e}")
+
     async def on_ready(self) -> None:
         """Бот запустился; проверяем стартовое сообщение с кнопкой."""
         print(f"Bot is running as {self.user}")
@@ -399,6 +411,23 @@ class AdminDecisionView(discord.ui.View):
         self.bot = bot
         self.db = db
         self.app_id = app_id
+        
+        approve_btn = discord.ui.Button(
+            label="Принять", 
+            style=discord.ButtonStyle.success,
+            custom_id=f"admin_approve_{app_id}"
+        )
+        reject_btn = discord.ui.Button(
+            label="Отклонить", 
+            style=discord.ButtonStyle.danger,
+            custom_id=f"admin_reject_{app_id}"
+        )
+        
+        approve_btn.callback = self.approve_btn
+        reject_btn.callback = self.reject_btn
+        
+        self.add_item(approve_btn)
+        self.add_item(reject_btn)
 
     async def _check_admin(self, interaction: discord.Interaction) -> bool:
         """Проверяем, что у пользователя есть админ‑роль."""
@@ -408,17 +437,19 @@ class AdminDecisionView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Принять", style=discord.ButtonStyle.success)
-    async def approve_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def approve_btn(self, interaction: discord.Interaction):
         """Одобряем заявку и обновляем карточку."""
         if not await self._check_admin(interaction):
             return
-        await self.db.update_status_with_comment(self.app_id, "approved", "Пользователь добавлен в Whitelist", interaction.user.id)
-        app = await self.db.get_application(self.app_id)
+        
+        app_id = int(interaction.data["custom_id"].split("_")[-1])
+        
+        await self.db.update_status_with_comment(app_id, "approved", "Пользователь добавлен в Whitelist", interaction.user.id)
+        app = await self.db.get_application(app_id)
         await self.bot.notify_user_status_change(app, "approved")
 
-        updated_app = await self.db.get_application(self.app_id)
-        view = AdminDecisionView(self.bot, self.db, self.app_id)
+        updated_app = await self.db.get_application(app_id)
+        view = AdminDecisionView(self.bot, self.db, app_id)
         for child in view.children:
             try:
                 child.disabled = True
@@ -426,12 +457,14 @@ class AdminDecisionView(discord.ui.View):
                 pass
         await interaction.response.edit_message(embed=self.bot.build_admin_embed(updated_app), view=view)
 
-    @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger)
-    async def reject_btn(self, interaction: discord.Interaction, _: discord.ui.Button):
+    async def reject_btn(self, interaction: discord.Interaction):
         """Запрашиваем причину и отклоняем заявку."""
         if not await self._check_admin(interaction):
             return
-        await interaction.response.send_modal(RejectReasonModal(self.bot, self.db, self.app_id, message=interaction.message))
+        
+        app_id = int(interaction.data["custom_id"].split("_")[-1])
+        
+        await interaction.response.send_modal(RejectReasonModal(self.bot, self.db, app_id, message=interaction.message))
 
 def build_bot(db: Database) -> WhitelistBot:
     """Создаём бота и регистрируем слэш‑команды."""

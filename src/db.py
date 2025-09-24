@@ -109,6 +109,15 @@ class Database:
         rows = await cursor.fetchall()
         return [r[0] for r in rows if r and r[0]]
 
+    async def get_pending_applications(self) -> List[Application]:
+        """Получить все заявки со статусом pending."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT * FROM applications WHERE status = 'pending' ORDER BY id ASC"
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_app(row) for row in rows if row]
+
     async def update_status(self, app_id: int, status: ApplicationStatus) -> bool:
         """Обновить статус заявки."""
         assert self._conn is not None

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_PATH: /app/data/whitelist.db
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_PATH: /app/data/whitelist.db
+      DISCORD_TOKEN: "your-discord-token"
+      GUILD_ID: "your-guild-id"
+      CHANNEL_ID: "your-channel-id"
+      ADMIN_CHANNEL_ID: "your-admin-channel-id"
+      ADMIN_ROLE: "your-admin-role-id"
+    restart: unless-stopped
+
+volumes:
+  data:
+    name: whitelist-data

@@ -30,7 +30,9 @@ def check_profile_open(api_key: str, steam_id: str) -> dict:
 
 
 def get_arma_games(api_key, steam_id, playtime: bool = False):
-    """Возвращает ARMA-игры с ненулевым временем. playtime=True -> (name, hours), иначе -> name."""
+    """Возвращает игры ARMA/SQUAD/DayZ с ненулевым временем.
+    playtime=True -> (name, hours), иначе -> name.
+    """
     url = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
     params = {
         'key': api_key,
@@ -50,7 +52,10 @@ def get_arma_games(api_key, steam_id, playtime: bool = False):
         for game in games:
             name = game.get('name')
             pts = game.get('playtime_forever')
-            if not name or 'ARMA' not in name.upper():
+            if not name:
+                continue
+            upper = name.upper()
+            if not ('ARMA' in upper or 'SQUAD' in upper or 'DAYZ' in upper):
                 continue
             if isinstance(pts, int) and pts > 0:
                 hours = round(pts / 60, 2)
@@ -61,7 +66,10 @@ def get_arma_games(api_key, steam_id, playtime: bool = False):
     for game in games:
         name = game.get('name')
         pts = game.get('playtime_forever')
-        if not name or 'ARMA' not in name.upper():
+        if not name:
+            continue
+        upper = name.upper()
+        if not ('ARMA' in upper or 'SQUAD' in upper or 'DAYZ' in upper):
             continue
         if isinstance(pts, int) and pts > 0:
             result_names.append(name)

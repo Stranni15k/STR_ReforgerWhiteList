@@ -188,6 +188,20 @@ class Database:
         await self._conn.commit()
         return cursor.rowcount > 0
 
+    async def get_pending_applications(self) -> List[Application]:
+        """Вернуть все заявки со статусом 'pending'."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT * FROM applications WHERE status = 'pending' ORDER BY id ASC"
+        )
+        rows = await cursor.fetchall()
+        apps: List[Application] = []
+        for row in rows:
+            app = self._row_to_app(row)
+            if app:
+                apps.append(app)
+        return apps
+
     def _row_to_app(self, row) -> Optional[Application]:
         """Преобразование строки БД в dataclass Application."""
         if not row:

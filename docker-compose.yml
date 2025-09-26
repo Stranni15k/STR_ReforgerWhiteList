@@ -26,6 +26,7 @@ services:
       CHANNEL_ID: "your-channel-id"
       ADMIN_CHANNEL_ID: "your-admin-channel-id"
       ADMIN_ROLE: "your-admin-role-id"
+      STEAM_API_KEY: "your-steam-web-api-key"
     restart: unless-stopped
 
 volumes:

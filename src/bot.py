@@ -7,6 +7,7 @@ from discord.ext import commands
 
 from src.config import get_settings
 from src.db import Database, ApplicationStatus
+import src.steam_api as steam_api
 
 INTENTS = discord.Intents.default()
 INTENTS.members = True
@@ -59,16 +60,16 @@ class ApplicationModal(discord.ui.Modal):
         )
         self.platform = discord.ui.TextInput(
             label="Платформа",
-            placeholder="PC/Xbox/PS",
+            placeholder="PC/PS/XBOX",
             required=True,
             max_length=32,
             default=original_data.get('platform', '')
         )
         self.steamid = discord.ui.TextInput(
             label="SteamID",
-            placeholder="64-bit SteamID (- Если PS/Xbox)",
-            required=True,
-            max_length=32,
+            placeholder="SteamID64",
+            required=False,
+            max_length=17,
             default=original_data.get('steamid', '')
         )
 
@@ -123,6 +124,32 @@ class ApplicationModal(discord.ui.Modal):
                 embed.add_field(name="Пример", value="76561198000000000", inline=False)
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
+            
+            settings = get_settings()
+            if settings.steam_api_key and steamid:
+                try:
+                    import asyncio as _asyncio
+                    profile_check = await _asyncio.to_thread(steam_api.check_profile_open, settings.steam_api_key, steamid)
+                    if not profile_check.get('open', False):
+                        embed = discord.Embed(
+                            title="Ваш профиль Steam закрыт",
+                            description="Ваш Steam профиль не является публичным или игровая информация скрыта.",
+                            color=0xe74c3c
+                        )
+                        embed.add_field(
+                            name="Что нужно сделать", 
+                            value="• Сделайте профиль публичным\n• Откройте игровую информацию\n• Убедитесь, что у вас не стоит галочка 'Скрывать общее время в игре'", 
+                            inline=False
+                        )
+                        embed.add_field(
+                            name="Как открыть профиль", 
+                            value="1. Зайдите в настройки Steam\n2. Приватность → Мой профиль → Открытый\n3. Приватность → Доступ к игровой информации → Открытый", 
+                            inline=False
+                        )
+                        await interaction.response.send_message(embed=embed, ephemeral=True)
+                        return
+                except Exception:
+                    pass
 
         if self.is_resubmit and self.original_app_id:
             fields = {
@@ -171,7 +198,7 @@ class ApplicationModal(discord.ui.Modal):
                 app = await self.db.get_application(app_id_for_admin)
                 if app:
                     view = AdminDecisionView(bot, self.db, app_id_for_admin)
-                    admin_embed = bot.build_admin_embed(app)
+                    admin_embed = await bot.build_admin_embed(app)
                     await channel.send(embed=admin_embed, view=view)
 
 class ApplyView(discord.ui.View):
@@ -319,18 +346,43 @@ class WhitelistBot(commands.Bot):
             return False
         return any(r.id == settings.admin_role_id for r in getattr(member, "roles", []))
 
-    def build_admin_embed(self, app) -> discord.Embed:
+    async def build_admin_embed(self, app) -> discord.Embed:
         """Собираем карточку заявки для админ‑канала."""
         text, color = get_status_ui(app.status)
-        embed = discord.Embed(title=f"Заявка #{app.id}", description=f"Статус: {text}", color=color, timestamp=discord.utils.utcnow())
+        
+        is_resubmit = app.admin_id is not None and app.status == "pending"
+        title = f"Заявка #{app.id}" + (" (Повторная)" if is_resubmit else "")
+        
+        embed = discord.Embed(title=title, description=f"Статус: {text}", color=color, timestamp=discord.utils.utcnow())
         embed.add_field(name="Игрок", value=f"{app.username} (<@{app.user_id}>)", inline=False)
-        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nПлатформа: `{app.platform}`\nSteamID: `{app.steam_id}`", inline=False)
+        steam_id_display = f"`{app.steam_id}`" if app.steam_id else "-"
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_id_display = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nПлатформа: `{app.platform}`\nSteamID: {steam_id_display}", inline=False)
+        
         if app.admin_comment:
             embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
         if app.admin_id:
             admin_user = self.get_user(app.admin_id)
             admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
-            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+            field_name = "Предыдущий обработчик" if is_resubmit else "Обработал"
+            embed.add_field(name=field_name, value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+
+        try:
+            settings = get_settings()
+            api_key = settings.steam_api_key
+            if api_key and app.steam_id:
+                import asyncio as _asyncio
+                games = await _asyncio.to_thread(steam_api.get_arma_games, api_key, app.steam_id, True)
+                if games:
+                    sorted_games = sorted(games, key=lambda x: x[1] or 0, reverse=True)
+                    lines = [f"{name} — {int(round(hours))} ч" for name, hours in sorted_games]
+                    embed.add_field(name="Количество наигранных часов", value="\n".join(lines), inline=False)
+                else:
+                    embed.add_field(name="Количество наигранных часов", value="Профиль закрыт или наигранных часов нет", inline=False)
+        except Exception:
+            pass
+
         return embed
 
     async def notify_user_status_change(self, app, new_status: str, comment: Optional[str] = None):
@@ -392,7 +444,7 @@ class RejectReasonModal(discord.ui.Modal):
                     child.disabled = True
                 except Exception:
                     pass
-            embed = self.bot.build_admin_embed(updated_app)
+            embed = await self.bot.build_admin_embed(updated_app)
             if self.message:
                 await self.message.edit(embed=embed, view=view)
             else:
@@ -455,7 +507,8 @@ class AdminDecisionView(discord.ui.View):
                 child.disabled = True
             except Exception:
                 pass
-        await interaction.response.edit_message(embed=self.bot.build_admin_embed(updated_app), view=view)
+        embed = await self.bot.build_admin_embed(updated_app)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def reject_btn(self, interaction: discord.Interaction):
         """Запрашиваем причину и отклоняем заявку."""

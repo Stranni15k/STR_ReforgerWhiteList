@@ -48,6 +48,9 @@ ADMIN_ROLE=your_admin_role_id
 
 # База данных
 DATABASE_PATH=whitelist.db
+
+# Ключ Steam Web API (необязательно, но рекомендовано для проверок профиля)
+STEAM_API_KEY=your_steam_web_api_key
 ```
 
 5. Запустите сервисы:
@@ -74,6 +77,7 @@ cd STR_ReforgerWhiteList
       CHANNEL_ID: "your-channel-id"          # ID канала для стартового сообщения о подаче заявок
       ADMIN_CHANNEL_ID: "your-admin-channel" # ID канала для вывода заявок для администрации
       ADMIN_ROLE: "your-admin-role"          # ID роли админа
+      STEAM_API_KEY: "your-steam-web-api-key" # Ключ Steam Web API для проверок профиля
 ```
 
 3. Запустите через скрипт развертывания:

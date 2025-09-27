@@ -55,14 +55,14 @@ class ApplicationModal(discord.ui.Modal):
             label="Arma ID",
             placeholder="Ваш Arma Reforger ID",
             required=True,
-            max_length=64,
+            max_length=36,
             default=original_data.get('armaid', '')
         )
         self.platform = discord.ui.TextInput(
             label="Платформа",
             placeholder="PC/PS/XBOX",
             required=True,
-            max_length=32,
+            max_length=4,
             default=original_data.get('platform', '')
         )
         self.steamid = discord.ui.TextInput(
@@ -156,8 +156,7 @@ class ApplicationModal(discord.ui.Modal):
                 "username": nickname,
                 "arma_id": armaid,
                 "platform": platform_norm,
-                "steam_id": steamid,
-                "admin_comment": None
+                "steam_id": steamid
             }
             await self.db.update_fields(self.original_app_id, fields)
             await self.db.update_status(self.original_app_id, "pending")
@@ -253,15 +252,11 @@ class WhitelistBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Синхронизируем слэш‑команды с Discord без дублирования."""
-        settings = get_settings()
         try:
-            if settings.guild_id:
-                guild = discord.Object(id=settings.guild_id)
-                await self.tree.sync(guild=guild)
-            else:
-                await self.tree.sync()
+            await self.tree.sync()
         except Exception:
-            pass
+            import traceback
+            traceback.print_exc()
 
         await self._restore_admin_views()
 
@@ -558,6 +553,28 @@ def build_bot(db: Database) -> WhitelistBot:
         embed.add_field(name="Где использовать", value="Все команды работают как в сервере, так и в **личных сообщениях** с ботом!", inline=False)
         embed.set_footer(text="Whitelist Bot • Arma Reforger")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name="remove_from_whitelist", description="Исключить пользователя из whitelist по идентификатору")
+    async def remove_from_whitelist(interaction: discord.Interaction,identifier: str, comment: Optional[str] = None):
+        """Исключить пользователя из whitelist по одному из идентификаторов."""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        app = await db.get_application_by_identifier(identifier)
+        if not app:
+            await interaction.response.send_message(f"Запись в whitelist по идентификатору {identifier} не найдена.", ephemeral=True)
+            return
+        
+        if not comment:
+            comment = "Пользователь был исключен из Whitelist"
+
+        await db.update_status_with_comment(app.id, "rejected", comment, interaction.user.id)
+
+        updated = await db.get_application(app.id)
+
+        user_to_mention = updated.user_id if updated else app.user_id
+        await interaction.response.send_message( f"Пользователь <@{user_to_mention}> исключён из whitelist.", ephemeral=True)
 
     return bot
 

@@ -202,6 +202,27 @@ class Database:
                 apps.append(app)
         return apps
 
+    async def get_application_by_identifier(self, identifier: str) -> Optional[Application]:
+        """Вернуть заявку по одному из идентификаторов"""
+        assert self._conn is not None
+        l = len(identifier)
+        if l == 36:
+            col, params = "arma_id", (identifier,)
+        elif identifier.isdigit() and l in (17, 18):
+            if l == 17:
+                col, params = "steam_id", (identifier,)
+            else:
+                col, params = "user_id", (int(identifier),)
+        else:
+            return None
+
+        cursor = await self._conn.execute(
+            f"SELECT * FROM applications WHERE {col} = ? ORDER BY id DESC LIMIT 1",
+            params,
+        )
+        row = await cursor.fetchone()
+        return self._row_to_app(row)
+
     def _row_to_app(self, row) -> Optional[Application]:
         """Преобразование строки БД в dataclass Application."""
         if not row:

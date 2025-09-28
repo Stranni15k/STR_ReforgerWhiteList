@@ -554,6 +554,71 @@ def build_bot(db: Database) -> WhitelistBot:
         embed.set_footer(text="Whitelist Bot • Arma Reforger")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @bot.tree.command(name="ids_by_discord", description="Показать SteamID и ArmaID по Discord ID")
+    async def ids_by_discord(interaction: discord.Interaction, discord_identifier: str):
+        """Вернуть SteamID и ArmaID по Discord ID."""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        m = re.search(r"(\d{17,19})", discord_identifier)
+        if not m:
+            await interaction.response.send_message("Укажите корректный Discord ID или упоминание (<@ID>).", ephemeral=True)
+            return
+
+        uid = int(m.group(1))
+        app = await db.get_user_latest_application(uid)
+        if not app:
+            await interaction.response.send_message(f"Записи для пользователя <@{uid}> не найдены.", ephemeral=True)
+            return
+
+        user_obj = bot.get_user(uid)
+        if not user_obj:
+            try:
+                user_obj = await bot.fetch_user(uid)
+            except Exception:
+                user_obj = None
+
+        user_label = f"{user_obj.name}#{user_obj.discriminator}" if user_obj else f"ID: {uid}"
+        embed = discord.Embed(title=f"Информация о пользователе {user_label}", color=0x3498db, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Никнейм", value=app.username or "-", inline=False)
+        embed.add_field(name="Arma ID", value=f"`{app.arma_id}`" if app.arma_id else "-", inline=True)
+        embed.add_field(name="Steam ID", value=f"`{app.steam_id}`" if app.steam_id else "-", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name="status_by_identifier", description="Показать статус по SteamID или ArmaID")
+    async def status_by_identifier(interaction: discord.Interaction, identifier: str):
+        """Показать статус заявки по SteamID64 или ArmaID"""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        id_str = identifier.strip()
+        if len(id_str) == 36:
+            app = await db.get_application_by_identifier(id_str)
+        elif id_str.isdigit() and len(id_str) == 17 and id_str.startswith("765"):
+            app = await db.get_application_by_identifier(id_str)
+        else:
+            await interaction.response.send_message("Разрешено запрашивать только по ArmaID или SteamID64.", ephemeral=True)
+            return
+
+        if not app:
+            await interaction.response.send_message(f"Запись по идентификатору `{id_str}` не найдена.", ephemeral=True)
+            return
+
+        text, color = get_status_ui(app.status)
+        embed = discord.Embed(title=f"Информация по заявке #{app.id}", description=f"**Статус:** {text}", color=color, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Игрок", value=f"{app.username} (<@{app.user_id}>)", inline=False)
+        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nSteamID: `{app.steam_id}`\n DiscordID: `{app.user_id}`", inline=False)
+        if app.admin_comment:
+            embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
+        if app.admin_id:
+            admin_user = bot.get_user(app.admin_id)
+            admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
+            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @bot.tree.command(name="remove_from_whitelist", description="Исключить пользователя из whitelist по идентификатору")
     async def remove_from_whitelist(interaction: discord.Interaction,identifier: str, comment: Optional[str] = None):
         """Исключить пользователя из whitelist по одному из идентификаторов."""
@@ -561,11 +626,20 @@ def build_bot(db: Database) -> WhitelistBot:
             await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
             return
 
-        app = await db.get_application_by_identifier(identifier)
-        if not app:
-            await interaction.response.send_message(f"Запись в whitelist по идентификатору {identifier} не найдена.", ephemeral=True)
+        ident = identifier.strip()
+
+        if len(ident) == 36:
+            app = await db.get_application_by_identifier(ident)
+        elif ident.isdigit() and len(ident) == 17 and ident.startswith("765"):
+            app = await db.get_application_by_identifier(ident)
+        else:
+            await interaction.response.send_message("Команда поддерживает только ArmaID или SteamID64", ephemeral=True)
             return
-        
+
+        if not app:
+            await interaction.response.send_message(f"Запись в whitelist по идентификатору {ident} не найдена.", ephemeral=True)
+            return
+
         if not comment:
             comment = "Пользователь был исключен из Whitelist"
 

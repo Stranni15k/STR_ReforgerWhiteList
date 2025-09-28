@@ -205,14 +205,13 @@ class Database:
     async def get_application_by_identifier(self, identifier: str) -> Optional[Application]:
         """Вернуть заявку по одному из идентификаторов"""
         assert self._conn is not None
-        l = len(identifier)
+        ident = identifier.strip()
+
+        l = len(ident)
         if l == 36:
-            col, params = "arma_id", (identifier,)
-        elif identifier.isdigit() and l in (17, 18):
-            if l == 17:
-                col, params = "steam_id", (identifier,)
-            else:
-                col, params = "user_id", (int(identifier),)
+            col, params = "arma_id", (ident,)
+        elif l == 17 and ident.isdigit():
+            col, params = "steam_id", (ident,)
         else:
             return None
 

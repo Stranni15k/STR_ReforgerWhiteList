@@ -89,3 +89,15 @@ chmod +x deploy.sh
 # Windows
 deploy.cmd
 ```
+
+## Команды бота
+
+Ниже перечислены все слэш‑команды, доступные в боте.
+- Команды для обычных пользователей:
+  - `/status` — проверить статус своей заявки
+  - `/help` — справка по использованию бота
+
+- Административные команды (требуется роль администратора):
+  - `/ids_by_discord <discord_identifier>` — получить SteamID и ArmaID по Discord ID
+  - `/status_by_identifier <identifier>` — посмотреть статус по SteamID/ArmaID
+  - `/remove_from_whitelist <identifier>` — исключить пользователя из whitelist

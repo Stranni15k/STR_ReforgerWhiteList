@@ -102,6 +102,16 @@ class ApplicationModal(discord.ui.Modal):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        if not armaid or len(armaid) != 36:
+            embed = discord.Embed(
+                title="Ошибка в поле 'Arma ID'",
+                description="Формат указан неверно.",
+                color=0xe74c3c
+            )
+            embed.add_field(name="Ожидаемый формат", value="ArmaID: 36 символов (UUID), например: 123e4567-e89b-12d3-a456-426614174000", inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
         if platform_norm == "PC":
             steam_lower = steamid.lower()
             if steam_lower.startswith("http://") or steam_lower.startswith("https://") or "steamcommunity" in steam_lower:
@@ -531,11 +541,19 @@ def build_bot(db: Database) -> WhitelistBot:
         embed = discord.Embed(title="Ваша заявка", description=f"**Статус:** {text}", color=color)
 
         embed.add_field(name="Информация о игроке", value=f"**Никнейм:** {app.username}\n**Discord:** <@{app.user_id}>", inline=False)
-        embed.add_field(name="Игровые данные", value=f"**Arma ID:** `{app.arma_id}`\n**Платформа:** `{app.platform}`\n**Steam ID:** `{app.steam_id}`", inline=False)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_field = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_field = "-"
+        embed.add_field(name="Игровые данные", value=f"**Arma ID:** `{app.arma_id}`\n**Платформа:** `{app.platform}`\n**Steam ID:** {steam_field}", inline=False)
         
-
         if app.status != "approved" and app.admin_comment:
             embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
+
+        if app.admin_id:
+            admin_user = bot.get_user(app.admin_id)
+            admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
+            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
 
         if app.status == "rejected":
             embed.add_field(name="Заявка отклонена", value="К сожалению, ваша заявка была отклонена.\nПовторно подать можно через кнопку в канале.", inline=False)
@@ -583,7 +601,11 @@ def build_bot(db: Database) -> WhitelistBot:
         embed = discord.Embed(title=f"Информация о пользователе {user_label}", color=0x3498db, timestamp=discord.utils.utcnow())
         embed.add_field(name="Никнейм", value=app.username or "-", inline=False)
         embed.add_field(name="Arma ID", value=f"`{app.arma_id}`" if app.arma_id else "-", inline=True)
-        embed.add_field(name="Steam ID", value=f"`{app.steam_id}`" if app.steam_id else "-", inline=True)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_inline = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_inline = "-"
+        embed.add_field(name="Steam ID", value=steam_inline, inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="status_by_identifier", description="Показать статус по SteamID или ArmaID")
@@ -609,7 +631,11 @@ def build_bot(db: Database) -> WhitelistBot:
         text, color = get_status_ui(app.status)
         embed = discord.Embed(title=f"Информация по заявке #{app.id}", description=f"**Статус:** {text}", color=color, timestamp=discord.utils.utcnow())
         embed.add_field(name="Игрок", value=f"{app.username} (<@{app.user_id}>)", inline=False)
-        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nSteamID: `{app.steam_id}`\n DiscordID: `{app.user_id}`", inline=False)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_display = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_display = "-"
+        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nSteamID: {steam_display}\n DiscordID: `{app.user_id}`", inline=False)
         if app.admin_comment:
             embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
         if app.admin_id:

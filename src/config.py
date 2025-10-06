@@ -37,3 +37,7 @@ def get_settings() -> Settings:
         database_path=database_path,
         steam_api_key=steam_api_key,
     )
+
+
+def get_database_path() -> str:
+    return os.getenv("DATABASE_PATH", "whitelist.db")

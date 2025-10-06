@@ -3,7 +3,7 @@ from flask import Flask, Response, jsonify, abort
 import asyncio
 from typing import Optional
 
-from src.config import get_settings
+from src.config import get_database_path
 from src.db import Database
 
 app = Flask(__name__)
@@ -12,8 +12,8 @@ def run_async(coro):
     return asyncio.run(coro)
 
 def get_db() -> Database:
-    settings = get_settings()
-    db = Database(settings.database_path)
+    database_path = get_database_path()
+    db = Database(database_path)
     run_async(db.connect())
     return db
 
@@ -31,7 +31,7 @@ def get_by_arma_id(arma_id: str):
         if steam_id:
             return jsonify({"whitelisted": whitelisted, "steamId": steam_id})
         else:
-            return jsonify({"whitelisted": False, "steamId": None})
+            return jsonify({"whitelisted": whitelisted, "steamId": None})
     finally:
         run_async(db.close())
 

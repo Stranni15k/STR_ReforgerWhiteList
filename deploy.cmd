@@ -1,0 +1,12 @@
+@echo off
+echo Starting Whitelist Bot deployment...
+
+if not exist data mkdir data
+
+docker-compose down
+docker-compose up --build -d
+docker-compose ps
+
+echo Deployment complete!
+echo API is available at: http://localhost:5000
+echo Check Discord for bot status

@@ -13,6 +13,7 @@ class Settings:
     admin_channel_id: int | None
     admin_role_id: int | None
     database_path: str
+    steam_api_key: str | None
 
 
 def get_settings() -> Settings:
@@ -22,6 +23,7 @@ def get_settings() -> Settings:
     admin_channel_id = int(os.getenv("ADMIN_CHANNEL_ID", "0")) or None
     admin_role_id = int(os.getenv("ADMIN_ROLE", "0")) or None
     database_path = os.getenv("DATABASE_PATH", "whitelist.db")
+    steam_api_key = os.getenv("STEAM_API_KEY", "") or None
 
     if not token:
         raise RuntimeError("DISCORD_TOKEN is required in .env")
@@ -33,4 +35,9 @@ def get_settings() -> Settings:
         admin_channel_id=admin_channel_id,
         admin_role_id=admin_role_id,
         database_path=database_path,
+        steam_api_key=steam_api_key,
     )
+
+
+def get_database_path() -> str:
+    return os.getenv("DATABASE_PATH", "whitelist.db")

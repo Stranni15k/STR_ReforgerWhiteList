@@ -7,6 +7,7 @@ from discord.ext import commands
 
 from src.config import get_settings
 from src.db import Database, ApplicationStatus
+import src.steam_api as steam_api
 
 INTENTS = discord.Intents.default()
 INTENTS.members = True
@@ -54,21 +55,21 @@ class ApplicationModal(discord.ui.Modal):
             label="Arma ID",
             placeholder="Ваш Arma Reforger ID",
             required=True,
-            max_length=64,
+            max_length=36,
             default=original_data.get('armaid', '')
         )
         self.platform = discord.ui.TextInput(
             label="Платформа",
-            placeholder="PC/Xbox/PS",
+            placeholder="PC/PS/XBOX",
             required=True,
-            max_length=32,
+            max_length=4,
             default=original_data.get('platform', '')
         )
         self.steamid = discord.ui.TextInput(
             label="SteamID",
-            placeholder="64-bit SteamID (- Если PS/Xbox)",
-            required=True,
-            max_length=32,
+            placeholder="SteamID64",
+            required=False,
+            max_length=17,
             default=original_data.get('steamid', '')
         )
 
@@ -101,6 +102,16 @@ class ApplicationModal(discord.ui.Modal):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        if not armaid or len(armaid) != 36:
+            embed = discord.Embed(
+                title="Ошибка в поле 'Arma ID'",
+                description="Формат указан неверно.",
+                color=0xe74c3c
+            )
+            embed.add_field(name="Ожидаемый формат", value="ArmaID: 36 символов (UUID), например: 123e4567-e89b-12d3-a456-426614174000", inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
         if platform_norm == "PC":
             steam_lower = steamid.lower()
             if steam_lower.startswith("http://") or steam_lower.startswith("https://") or "steamcommunity" in steam_lower:
@@ -123,14 +134,39 @@ class ApplicationModal(discord.ui.Modal):
                 embed.add_field(name="Пример", value="76561198000000000", inline=False)
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
+            
+            settings = get_settings()
+            if settings.steam_api_key and steamid:
+                try:
+                    import asyncio as _asyncio
+                    profile_check = await _asyncio.to_thread(steam_api.check_profile_open, settings.steam_api_key, steamid)
+                    if not profile_check.get('open', False):
+                        embed = discord.Embed(
+                            title="Ваш профиль Steam закрыт",
+                            description="Ваш Steam профиль не является публичным или игровая информация скрыта.",
+                            color=0xe74c3c
+                        )
+                        embed.add_field(
+                            name="Что нужно сделать", 
+                            value="• Сделайте профиль публичным\n• Откройте игровую информацию\n• Убедитесь, что у вас не стоит галочка 'Скрывать общее время в игре'", 
+                            inline=False
+                        )
+                        embed.add_field(
+                            name="Как открыть профиль", 
+                            value="1. Зайдите в настройки Steam\n2. Приватность → Мой профиль → Открытый\n3. Приватность → Доступ к игровой информации → Открытый", 
+                            inline=False
+                        )
+                        await interaction.response.send_message(embed=embed, ephemeral=True)
+                        return
+                except Exception:
+                    pass
 
         if self.is_resubmit and self.original_app_id:
             fields = {
                 "username": nickname,
                 "arma_id": armaid,
                 "platform": platform_norm,
-                "steam_id": steamid,
-                "admin_comment": None
+                "steam_id": steamid
             }
             await self.db.update_fields(self.original_app_id, fields)
             await self.db.update_status(self.original_app_id, "pending")
@@ -171,7 +207,7 @@ class ApplicationModal(discord.ui.Modal):
                 app = await self.db.get_application(app_id_for_admin)
                 if app:
                     view = AdminDecisionView(bot, self.db, app_id_for_admin)
-                    admin_embed = bot.build_admin_embed(app)
+                    admin_embed = await bot.build_admin_embed(app)
                     await channel.send(embed=admin_embed, view=view)
 
 class ApplyView(discord.ui.View):
@@ -226,15 +262,11 @@ class WhitelistBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Синхронизируем слэш‑команды с Discord без дублирования."""
-        settings = get_settings()
         try:
-            if settings.guild_id:
-                guild = discord.Object(id=settings.guild_id)
-                await self.tree.sync(guild=guild)
-            else:
-                await self.tree.sync()
+            await self.tree.sync()
         except Exception:
-            pass
+            import traceback
+            traceback.print_exc()
 
         await self._restore_admin_views()
 
@@ -319,18 +351,43 @@ class WhitelistBot(commands.Bot):
             return False
         return any(r.id == settings.admin_role_id for r in getattr(member, "roles", []))
 
-    def build_admin_embed(self, app) -> discord.Embed:
+    async def build_admin_embed(self, app) -> discord.Embed:
         """Собираем карточку заявки для админ‑канала."""
         text, color = get_status_ui(app.status)
-        embed = discord.Embed(title=f"Заявка #{app.id}", description=f"Статус: {text}", color=color, timestamp=discord.utils.utcnow())
+        
+        is_resubmit = app.admin_id is not None and app.status == "pending"
+        title = f"Заявка #{app.id}" + (" (Повторная)" if is_resubmit else "")
+        
+        embed = discord.Embed(title=title, description=f"Статус: {text}", color=color, timestamp=discord.utils.utcnow())
         embed.add_field(name="Игрок", value=f"{app.username} (<@{app.user_id}>)", inline=False)
-        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nПлатформа: `{app.platform}`\nSteamID: `{app.steam_id}`", inline=False)
+        steam_id_display = f"`{app.steam_id}`" if app.steam_id else "-"
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_id_display = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nПлатформа: `{app.platform}`\nSteamID: {steam_id_display}", inline=False)
+        
         if app.admin_comment:
             embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
         if app.admin_id:
             admin_user = self.get_user(app.admin_id)
             admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
-            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+            field_name = "Предыдущий обработчик" if is_resubmit else "Обработал"
+            embed.add_field(name=field_name, value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+
+        try:
+            settings = get_settings()
+            api_key = settings.steam_api_key
+            if api_key and app.steam_id:
+                import asyncio as _asyncio
+                games = await _asyncio.to_thread(steam_api.get_arma_games, api_key, app.steam_id, True)
+                if games:
+                    sorted_games = sorted(games, key=lambda x: x[1] or 0, reverse=True)
+                    lines = [f"{name} — {int(round(hours))} ч" for name, hours in sorted_games]
+                    embed.add_field(name="Количество наигранных часов", value="\n".join(lines), inline=False)
+                else:
+                    embed.add_field(name="Количество наигранных часов", value="Профиль закрыт или наигранных часов нет", inline=False)
+        except Exception:
+            pass
+
         return embed
 
     async def notify_user_status_change(self, app, new_status: str, comment: Optional[str] = None):
@@ -392,7 +449,7 @@ class RejectReasonModal(discord.ui.Modal):
                     child.disabled = True
                 except Exception:
                     pass
-            embed = self.bot.build_admin_embed(updated_app)
+            embed = await self.bot.build_admin_embed(updated_app)
             if self.message:
                 await self.message.edit(embed=embed, view=view)
             else:
@@ -455,7 +512,8 @@ class AdminDecisionView(discord.ui.View):
                 child.disabled = True
             except Exception:
                 pass
-        await interaction.response.edit_message(embed=self.bot.build_admin_embed(updated_app), view=view)
+        embed = await self.bot.build_admin_embed(updated_app)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def reject_btn(self, interaction: discord.Interaction):
         """Запрашиваем причину и отклоняем заявку."""
@@ -483,11 +541,19 @@ def build_bot(db: Database) -> WhitelistBot:
         embed = discord.Embed(title="Ваша заявка", description=f"**Статус:** {text}", color=color)
 
         embed.add_field(name="Информация о игроке", value=f"**Никнейм:** {app.username}\n**Discord:** <@{app.user_id}>", inline=False)
-        embed.add_field(name="Игровые данные", value=f"**Arma ID:** `{app.arma_id}`\n**Платформа:** `{app.platform}`\n**Steam ID:** `{app.steam_id}`", inline=False)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_field = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_field = "-"
+        embed.add_field(name="Игровые данные", value=f"**Arma ID:** `{app.arma_id}`\n**Платформа:** `{app.platform}`\n**Steam ID:** {steam_field}", inline=False)
         
-
         if app.status != "approved" and app.admin_comment:
             embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
+
+        if app.admin_id:
+            admin_user = bot.get_user(app.admin_id)
+            admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
+            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
 
         if app.status == "rejected":
             embed.add_field(name="Заявка отклонена", value="К сожалению, ваша заявка была отклонена.\nПовторно подать можно через кнопку в канале.", inline=False)
@@ -505,6 +571,110 @@ def build_bot(db: Database) -> WhitelistBot:
         embed.add_field(name="Где использовать", value="Все команды работают как в сервере, так и в **личных сообщениях** с ботом!", inline=False)
         embed.set_footer(text="Whitelist Bot • Arma Reforger")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name="ids_by_discord", description="Показать SteamID и ArmaID по Discord ID")
+    async def ids_by_discord(interaction: discord.Interaction, discord_identifier: str):
+        """Вернуть SteamID и ArmaID по Discord ID."""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        m = re.search(r"(\d{17,19})", discord_identifier)
+        if not m:
+            await interaction.response.send_message("Укажите корректный Discord ID или упоминание (<@ID>).", ephemeral=True)
+            return
+
+        uid = int(m.group(1))
+        app = await db.get_user_latest_application(uid)
+        if not app:
+            await interaction.response.send_message(f"Записи для пользователя <@{uid}> не найдены.", ephemeral=True)
+            return
+
+        user_obj = bot.get_user(uid)
+        if not user_obj:
+            try:
+                user_obj = await bot.fetch_user(uid)
+            except Exception:
+                user_obj = None
+
+        user_label = f"{user_obj.name}#{user_obj.discriminator}" if user_obj else f"ID: {uid}"
+        embed = discord.Embed(title=f"Информация о пользователе {user_label}", color=0x3498db, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Никнейм", value=app.username or "-", inline=False)
+        embed.add_field(name="Arma ID", value=f"`{app.arma_id}`" if app.arma_id else "-", inline=True)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_inline = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_inline = "-"
+        embed.add_field(name="Steam ID", value=steam_inline, inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name="status_by_identifier", description="Показать статус по SteamID или ArmaID")
+    async def status_by_identifier(interaction: discord.Interaction, identifier: str):
+        """Показать статус заявки по SteamID64 или ArmaID"""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        id_str = identifier.strip()
+        if len(id_str) == 36:
+            app = await db.get_application_by_identifier(id_str)
+        elif id_str.isdigit() and len(id_str) == 17 and id_str.startswith("765"):
+            app = await db.get_application_by_identifier(id_str)
+        else:
+            await interaction.response.send_message("Разрешено запрашивать только по ArmaID или SteamID64.", ephemeral=True)
+            return
+
+        if not app:
+            await interaction.response.send_message(f"Запись по идентификатору `{id_str}` не найдена.", ephemeral=True)
+            return
+
+        text, color = get_status_ui(app.status)
+        embed = discord.Embed(title=f"Информация по заявке #{app.id}", description=f"**Статус:** {text}", color=color, timestamp=discord.utils.utcnow())
+        embed.add_field(name="Игрок", value=f"{app.username} (<@{app.user_id}>)", inline=False)
+        if app.steam_id and re.fullmatch(r"\d{17}", str(app.steam_id)):
+            steam_display = f"[{app.steam_id}](https://steamcommunity.com/profiles/{app.steam_id})"
+        else:
+            steam_display = "-"
+        embed.add_field(name="Данные", value=f"Arma ID: `{app.arma_id}`\nSteamID: {steam_display}\n DiscordID: `{app.user_id}`", inline=False)
+        if app.admin_comment:
+            embed.add_field(name="Комментарий администратора", value=f"```{app.admin_comment}```", inline=False)
+        if app.admin_id:
+            admin_user = bot.get_user(app.admin_id)
+            admin_name = admin_user.display_name if admin_user else f"ID: {app.admin_id}"
+            embed.add_field(name="Обработал", value=f"**{admin_name}** (<@{app.admin_id}>)", inline=False)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @bot.tree.command(name="remove_from_whitelist", description="Исключить пользователя из whitelist по идентификатору")
+    async def remove_from_whitelist(interaction: discord.Interaction,identifier: str, comment: Optional[str] = None):
+        """Исключить пользователя из whitelist по одному из идентификаторов."""
+        if not await bot.has_admin_role(interaction.user.id):
+            await interaction.response.send_message("Недостаточно прав для выполнения этой команды.", ephemeral=True)
+            return
+
+        ident = identifier.strip()
+
+        if len(ident) == 36:
+            app = await db.get_application_by_identifier(ident)
+        elif ident.isdigit() and len(ident) == 17 and ident.startswith("765"):
+            app = await db.get_application_by_identifier(ident)
+        else:
+            await interaction.response.send_message("Команда поддерживает только ArmaID или SteamID64", ephemeral=True)
+            return
+
+        if not app:
+            await interaction.response.send_message(f"Запись в whitelist по идентификатору {ident} не найдена.", ephemeral=True)
+            return
+
+        if not comment:
+            comment = "Пользователь был исключен из Whitelist"
+
+        await db.update_status_with_comment(app.id, "rejected", comment, interaction.user.id)
+
+        updated = await db.get_application(app.id)
+
+        user_to_mention = updated.user_id if updated else app.user_id
+        await interaction.response.send_message( f"Пользователь <@{user_to_mention}> исключён из whitelist.", ephemeral=True)
 
     return bot
 

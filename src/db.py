@@ -100,23 +100,45 @@ class Database:
         row = await cursor.fetchone()
         return self._row_to_app(row)
 
-    async def list_approved_arma_ids(self) -> List[str]:
-        """Список Arma ID всех одобренных заявок."""
+    async def get_steam_id_by_arma_id(self, arma_id: str) -> Optional[str]:
+        """Вернуть steam_id по arma_id, если запись есть."""
         assert self._conn is not None
         cursor = await self._conn.execute(
-            "SELECT DISTINCT arma_id FROM applications WHERE status = 'approved' ORDER BY arma_id ASC"
+            "SELECT steam_id FROM applications WHERE arma_id = ? LIMIT 1",
+            (arma_id,)
         )
-        rows = await cursor.fetchall()
-        return [r[0] for r in rows if r and r[0]]
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] else None
 
-    async def get_pending_applications(self) -> List[Application]:
-        """Получить все заявки со статусом pending."""
+    async def is_whitelisted_by_arma_id(self, arma_id: str) -> bool:
+        """True если есть заявка с arma_id и статусом approved."""
         assert self._conn is not None
         cursor = await self._conn.execute(
-            "SELECT * FROM applications WHERE status = 'pending' ORDER BY id ASC"
+            "SELECT 1 FROM applications WHERE arma_id = ? AND status = 'approved' LIMIT 1",
+            (arma_id,)
         )
-        rows = await cursor.fetchall()
-        return [self._row_to_app(row) for row in rows if row]
+        row = await cursor.fetchone()
+        return bool(row)
+
+    async def get_arma_id_by_steam_id(self, steam_id: str) -> Optional[str]:
+        """Вернуть arma_id по steam_id, если запись есть."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT arma_id FROM applications WHERE steam_id = ? LIMIT 1",
+            (steam_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row and row[0] else None
+
+    async def is_whitelisted_by_steam_id(self, steam_id: str) -> bool:
+        """True если есть заявка с steam_id и статусом approved."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT 1 FROM applications WHERE steam_id = ? AND status = 'approved' LIMIT 1",
+            (steam_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row)
 
     async def update_status(self, app_id: int, status: ApplicationStatus) -> bool:
         """Обновить статус заявки."""
@@ -165,6 +187,40 @@ class Database:
         )
         await self._conn.commit()
         return cursor.rowcount > 0
+
+    async def get_pending_applications(self) -> List[Application]:
+        """Вернуть все заявки со статусом 'pending'."""
+        assert self._conn is not None
+        cursor = await self._conn.execute(
+            "SELECT * FROM applications WHERE status = 'pending' ORDER BY id ASC"
+        )
+        rows = await cursor.fetchall()
+        apps: List[Application] = []
+        for row in rows:
+            app = self._row_to_app(row)
+            if app:
+                apps.append(app)
+        return apps
+
+    async def get_application_by_identifier(self, identifier: str) -> Optional[Application]:
+        """Вернуть заявку по одному из идентификаторов"""
+        assert self._conn is not None
+        ident = identifier.strip()
+
+        l = len(ident)
+        if l == 36:
+            col, params = "arma_id", (ident,)
+        elif l == 17 and ident.isdigit():
+            col, params = "steam_id", (ident,)
+        else:
+            return None
+
+        cursor = await self._conn.execute(
+            f"SELECT * FROM applications WHERE {col} = ? ORDER BY id DESC LIMIT 1",
+            params,
+        )
+        row = await cursor.fetchone()
+        return self._row_to_app(row)
 
     def _row_to_app(self, row) -> Optional[Application]:
         """Преобразование строки БД в dataclass Application."""
